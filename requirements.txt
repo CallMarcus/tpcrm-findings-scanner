@@ -1,0 +1,5 @@
+# TPCRM Findings Scanner Requirements
+# Only PyYAML is required for configuration management
+# All other functionality uses Python standard library
+
+PyYAML>=6.0

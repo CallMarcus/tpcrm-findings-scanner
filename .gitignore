@@ -1,0 +1,43 @@
+# Local configuration (copy from config.example.yaml)
+config.yaml
+config.local.yaml
+
+# Scan outputs and legacy artifacts
+outputs/
+legacy_outputs/
+
+# Local / customer target lists (never commit real finding exports)
+legacy_inputs.txt
+targets.txt
+targets.local.txt
+
+# AI / agent assistant notes (local only)
+AGENTS.md
+CLAUDE.md
+Agents.md
+Claude.md
+.cursor/
+.cursorrules
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

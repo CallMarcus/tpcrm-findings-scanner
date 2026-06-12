@@ -1,0 +1,30 @@
+signature:
+  enabled: true
+  user_agent: "TPCRM Findings Validation Scan (Contact: security@example.com)"
+  signature_header: "X-Security-Scan"
+  signature_value: "TPCRM Findings Validation Scan"
+  contact_header: "X-Contact"
+  contact_value: "security@example.com"
+  stealth_user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
+
+scan:
+  default_ports: [80, 443, 8080, 8443, 21, 22, 25, 110, 143, 993, 995, 389, 636, 3306, 1433, 1521, 5432, 3389, 5900, 9200, 27017, 53]
+  timeout: 1.5
+  max_workers: 200
+  max_redirects: 8
+  stay_on_ip: false
+  max_http_probes: 8
+  max_host_candidates_per_port: 3
+  capture_body: false
+  capture_body_bytes: 0
+  # Optional default profile when --profile is omitted: quick, web, or full
+  default_profile: null
+
+output:
+  base_dir: "outputs"
+  reports_dir: "reports"
+  evidence_dir: "evidence"
+  logs_dir: "logs"
+  include_markdown: true
+  include_json: true
+  include_csv: false
