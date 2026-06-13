@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ssc.config import Config
-from ssc.scanners import PortScanner, TLSScanner, HTTPScanner, EvidenceCollector, BackportDetector
+from ssc.scanners import PortScanner, TLSScanner, HTTPScanner, EvidenceCollector, BackportDetector, CipherEnumerator
 from ssc.analyzers import (
     SecurityHeaderAnalyzer,
     WAFCDNDetector,
@@ -52,6 +52,7 @@ class SSCToolkit:
         self.config = config
         self.port_scanner = PortScanner(config.scan)
         self.tls_scanner = TLSScanner(config.scan)
+        self.cipher_enumerator = CipherEnumerator(config.scan)
         self.http_scanner = HTTPScanner(config.scan, config.signature)
         self.evidence_collector = EvidenceCollector()
         self.backport_detector = BackportDetector()
@@ -79,6 +80,7 @@ class SSCToolkit:
         skip_port_scan: bool = False,
         profile: str = "full",
         input_target: Optional[str] = None,
+        cipher: bool = False,
     ) -> Dict[str, Any]:
         """Perform comprehensive scan of target"""
         display_target = input_target or target_ip
@@ -142,7 +144,19 @@ class SSCToolkit:
                 
                 scan_data["tls_analysis"] = tls_results
                 scan_log("[+] TLS analysis complete")
-            
+
+            # Cipher-suite enumeration (optional, --cipher)
+            if cipher:
+                open_now = port_results.get("open_ports", [])
+                tls_web_ports = [p for p in self.cipher_enumerator.WEB_TLS_PORTS if p in open_now]
+                if tls_web_ports:
+                    scan_log("[*] Enumerating TLS cipher suites...")
+                    scan_data["cipher_enumeration"] = self.cipher_enumerator.enumerate_target(
+                        target_ip, open_now, server_name=host
+                    )
+                    weak = scan_data["cipher_enumeration"].get("summary", {}).get("weak_count", 0)
+                    scan_log(f"[+] Cipher enumeration complete: {weak} weak finding(s)")
+
             # HTTP/HTTPS analysis
             candidate_ports = port_results.get("open_ports", [])
             web_ports = [p for p in candidate_ports if p in (80, 443, 8080, 8443)] if only_web or candidate_ports else []
@@ -586,6 +600,7 @@ Examples:
     scan_parser.add_argument("--stealth", action="store_true", help="Use stealth mode (no signatures)")
     scan_parser.add_argument("--evidence", action="store_true", help="Generate evidence reports")
     scan_parser.add_argument("--backports", action="store_true", help="Analyze for backported packages")
+    scan_parser.add_argument("--cipher", action="store_true", help="Enumerate accepted TLS cipher suites and validate weak-cipher findings")
     scan_parser.add_argument("--timeout", type=float, help="Connection timeout in seconds")
     scan_parser.add_argument("--config", help="Path to config file")
     scan_parser.add_argument("--only-web", action="store_true", help="Probe web ports only (HTTP/HTTPS)")
@@ -610,6 +625,7 @@ Examples:
     batch_parser.add_argument("--stealth", action="store_true", help="Use stealth mode")
     batch_parser.add_argument("--evidence", action="store_true", help="Collect compensating-controls evidence per target")
     batch_parser.add_argument("--backports", action="store_true", help="Analyze for backported packages per target")
+    batch_parser.add_argument("--cipher", action="store_true", help="Enumerate accepted TLS cipher suites per target")
     batch_parser.add_argument("--only-web", action="store_true", help="Probe web ports only (HTTP/HTTPS)")
     batch_parser.add_argument("--no-port-scan", action="store_true", help="Skip TCP port scan and assume web ports")
     batch_parser.add_argument(
@@ -706,6 +722,7 @@ class TargetScanOptions:
     skip_port_scan: bool = False
     evidence: bool = False
     backports: bool = False
+    cipher: bool = False
     profile: Optional[str] = None
     input_target: Optional[str] = None
     write_reports: bool = True
@@ -751,6 +768,7 @@ def run_target_pipeline(
             skip_port_scan=options.skip_port_scan,
             profile=profile_label,
             input_target=options.input_target,
+            cipher=options.cipher,
         )
 
         success = "error" not in scan_data
@@ -821,10 +839,11 @@ def handle_scan_command(args, toolkit: SSCToolkit):
                 skip_port_scan=getattr(args, "no_port_scan", False),
                 evidence=args.evidence,
                 backports=args.backports,
+                cipher=args.cipher,
                 profile=getattr(args, "profile", None),
                 input_target=scan_target.input,
                 write_reports=True,
-                write_evidence_reports=args.evidence or args.backports,
+                write_evidence_reports=args.evidence or args.backports or args.cipher,
             ),
         )
     except ValueError as exc:
@@ -889,6 +908,7 @@ def run_batch_target(
     skip_port_scan: bool = False,
     evidence: bool = False,
     backports: bool = False,
+    cipher: bool = False,
     profile: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Scan a single batch target and return a flattened summary row payload."""
@@ -903,10 +923,11 @@ def run_batch_target(
                 skip_port_scan=skip_port_scan,
                 evidence=evidence,
                 backports=backports,
+                cipher=cipher,
                 profile=profile,
                 input_target=scan_target.input,
                 write_reports=True,
-                write_evidence_reports=evidence or backports,
+                write_evidence_reports=evidence or backports or cipher,
             ),
         )
         success = "error" not in scan_data
@@ -961,6 +982,7 @@ def handle_batch_command(args, toolkit: SSCToolkit):
                 skip_port_scan=getattr(args, "no_port_scan", False),
                 evidence=getattr(args, "evidence", False),
                 backports=getattr(args, "backports", False),
+                cipher=getattr(args, "cipher", False),
                 profile=getattr(args, "profile", None),
             ): scan_target
             for scan_target in targets
@@ -999,6 +1021,7 @@ def handle_batch_command(args, toolkit: SSCToolkit):
             "skip_port_scan": getattr(args, "no_port_scan", False),
             "evidence": getattr(args, "evidence", False),
             "backports": getattr(args, "backports", False),
+            "cipher": getattr(args, "cipher", False),
             "profile": getattr(args, "profile", None),
             "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
         },

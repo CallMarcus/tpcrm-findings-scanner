@@ -1247,6 +1247,44 @@ def test_cipher_classifier():
     print("Cipher classifier: OK")
 
 
+def test_cipher_flag_passthrough():
+    parser = create_parser()
+    scan_args = parser.parse_args(["scan", "203.0.113.10", "--cipher", "-y"])
+    batch_args = parser.parse_args(["batch", "targets.txt", "--cipher"])
+    assert_true(scan_args.cipher is True, "scan --cipher not parsed")
+    assert_true(batch_args.cipher is True, "batch --cipher not parsed")
+
+    options = TargetScanOptions(cipher=True)
+    assert_true(options.cipher is True, "TargetScanOptions.cipher missing")
+
+    toolkit = SSCToolkit(Config.load())
+    assert_true(hasattr(toolkit, "cipher_enumerator"), "Toolkit missing cipher_enumerator")
+
+    captured = {}
+    original = toolkit.cipher_enumerator.enumerate_target
+
+    def stub_enumerate(ip, open_ports, server_name=None):
+        captured["called"] = (ip, tuple(open_ports), server_name)
+        return {"scanner_openssl": "test", "ports": {"443": {}},
+                "weak_findings": [], "summary": {"weak_count": 0, "categories": [], "accepted_total": 3}}
+
+    toolkit.cipher_enumerator.enumerate_target = stub_enumerate
+    try:
+        scan_data = toolkit.scan_target(
+            "203.0.113.10",
+            ports=[443],
+            skip_port_scan=True,
+            only_web=True,
+            cipher=True,
+        )
+    finally:
+        toolkit.cipher_enumerator.enumerate_target = original
+
+    assert_true("cipher_enumeration" in scan_data, "cipher_enumeration not attached to scan_data")
+    assert_true(captured.get("called") is not None, "enumerate_target was not called")
+    print("Cipher flag passthrough: OK")
+
+
 def test_scan_diff_order_insensitive():
     from ssc.analyzers.scan_diff import _set_delta
 
@@ -1297,6 +1335,7 @@ def main():
     test_scan_signature_banner()
     test_scan_log_session()
     test_batch_flag_passthrough()
+    test_cipher_flag_passthrough()
     test_enrich_scan_data_and_scan_loader()
     test_tls_self_signed_extraction()
     test_cipher_enumeration_local()
