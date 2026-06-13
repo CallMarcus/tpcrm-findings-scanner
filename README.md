@@ -16,7 +16,7 @@ Given an IP or hostname (and optional `--host` override on IP targets), the scan
 
 1. **Discovers** — reverse DNS, TCP port scan with banners, TLS cert/SAN extraction, HTTP/HTTPS probes, forward DNS/CNAME chain hints
 2. **Classifies** — origin server vs managed edge (CDN, cloud WAF, load balancer) with evidence
-3. **Assesses** — security headers, WAF/CDN fingerprinting (wafw00f-style patterns), server version/backport indicators
+3. **Assesses** — security headers, WAF/CDN fingerprinting (wafw00f-style patterns), server version/backport indicators, optional TLS cipher-suite enumeration (`--cipher`)
 4. **Documents** — JSON + Markdown reports, optional CSV evidence, finding-response narratives
 
 The main question it answers: *"Should we remediate against this IP, or is this a CDN/WAF edge (or other false-positive context)?"*
@@ -95,6 +95,7 @@ Target IP or hostname
   → reverse DNS
   → port scan + banners
   → TLS analysis (cert, versions, SANs)
+  → TLS cipher enumeration (optional, --cipher)
   → HTTP/HTTPS probes (smart host selection, capped)
   → security analysis (headers, WAF/CDN, classification)
   → origin discovery (DNS chain, hostname hints)
@@ -182,7 +183,7 @@ Outputs land in `outputs/`:
 | `outputs/reports/scan_<ip>_<ts>.json` | Full structured scan data + top-level `summary` |
 | `outputs/reports/scan_<ip>_<ts>.md` | Human-readable report with finding-response narrative |
 | `outputs/logs/scan_<ip>_<ts>.log` | Per-target scan log (console output mirrored with timestamps) |
-| `outputs/evidence/evidence_*.csv` | Backport/security evidence (with `--evidence` / `--backports`) |
+| `outputs/evidence/evidence_*.csv` | Backport/security/cipher evidence (with `--evidence` / `--backports` / `--cipher`) |
 | `outputs/reports/batch_summary_*.json` | Batch run index |
 | `outputs/evidence/batch_summary_*.csv` | Batch CSV rollup (with `--output-csv`) |
 
@@ -205,6 +206,7 @@ Every scan JSON includes a compact `summary` block:
     "security_score": { "grade": "C", "percentage": 66.7 },
     "backport_confidence": "medium",
     "evidence_assessment": { "overall": "strong", "confidence": "high", "evidence_count": 12 },
+    "cipher_summary": { "accepted_total": 14, "weak_count": 1, "categories": ["3des-sweet32"] },
     "origin_discovery": {
       "query_hostname": "www.example.com",
       "edge_detected_in_chain": true,
@@ -228,6 +230,7 @@ Markdown reports include a **Remediation Narrative** section — plain-language 
 - Origin hostname hints and DNS/CNAME chain context
 - Compensating controls (WAF, security headers)
 - Backport/false-positive context when `--backports` is used
+- TLS cipher-suite findings (confirm or refute weak-cipher findings) when `--cipher` is used
 - Numbered recommended actions and supporting evidence bullets
 
 ## Configuration
@@ -249,6 +252,8 @@ scan:
   max_host_candidates_per_port: 3
   capture_body: false
   capture_body_bytes: 0
+  cipher_enum: false              # enable --cipher by default
+  cipher_max_per_protocol: 64     # cap on ciphers enumerated per TLS version
 
 output:
   base_dir: "outputs"
@@ -274,6 +279,7 @@ scanner/
     ├── scanners/
     │   ├── port_scanner.py        # TCP scan + banners
     │   ├── tls_scanner.py         # Cert/SAN/TLS versions
+    │   ├── cipher_enumerator.py   # TLS cipher-suite enumeration + weak-cipher tags
     │   ├── http_scanner.py        # HTTP probes + optional body capture
     │   ├── backport_detector.py   # Linux backport evidence
     │   └── evidence_collector.py  # Compensating-controls aggregation
