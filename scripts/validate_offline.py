@@ -201,6 +201,28 @@ def test_json_summary():
     print("JSON summary: OK")
 
 
+def test_cipher_json_summary():
+    import json
+    scan_data = {
+        "port_scan": {"open_ports": [443]},
+        "cipher_enumeration": {
+            "scanner_openssl": "OpenSSL test",
+            "ports": {"443": {}},
+            "weak_findings": [{"category": "rc4", "severity": "high", "port": 443}],
+            "summary": {"ports_tested": [443], "accepted_total": 12, "weak_count": 1, "categories": ["rc4"]},
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        path = JSONReporter(output_dir=tmp).generate_report(scan_data, "203.0.113.10")
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    cipher_summary = data["summary"].get("cipher_summary", {})
+    assert_true(cipher_summary.get("weak_count") == 1, f"cipher_summary weak_count wrong: {cipher_summary}")
+    assert_true(cipher_summary.get("accepted_total") == 12, f"cipher_summary accepted_total wrong: {cipher_summary}")
+    assert_true("rc4" in cipher_summary.get("categories", []), f"cipher_summary categories wrong: {cipher_summary}")
+    print("Cipher JSON summary: OK")
+
+
 def test_tls_certificate_formatting():
     scanner = TLSScanner(ScanConfig())
     cert = {
@@ -1316,6 +1338,7 @@ def main():
     test_http_parser_features()
     test_markdown_report()
     test_json_summary()
+    test_cipher_json_summary()
     test_tls_certificate_formatting()
     test_security_score_promotion()
     test_backport_csv_and_batch_helpers()
