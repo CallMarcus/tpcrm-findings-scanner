@@ -174,6 +174,28 @@ def validate_origin_target(toolkit: SSCToolkit, target_ip: str, hostname: str) -
     print(f"[+] Origin validation passed: {hostname} ({target_ip})")
 
 
+def validate_cipher_enumeration(toolkit: SSCToolkit, cdn_ip: str) -> None:
+    print(f"[*] Live cipher enumeration: {cdn_ip}")
+    cipher_result = toolkit.scan_target(cdn_ip, only_web=True, skip_port_scan=True, ports=[443], cipher=True)
+    cipher_enum = cipher_result.get("cipher_enumeration", {})
+    assert_true(bool(cipher_enum), "Live cipher enumeration produced no output")
+    protocols = cipher_enum.get("ports", {}).get("443", {}).get("protocols", {})
+    assert_true(
+        protocols.get("SSLv2", {}).get("tested") is False,
+        "SSLv2 should be reported untested",
+    )
+    assert_true(
+        protocols.get("SSLv3", {}).get("tested") is False,
+        "SSLv3 should be reported untested",
+    )
+    accepted = (
+        protocols.get("TLSv1.2", {}).get("accepted", [])
+        + protocols.get("TLSv1.3", {}).get("accepted", [])
+    )
+    assert_true(bool(accepted), "Live enumeration found no TLS 1.2/1.3 ciphers on the CDN endpoint")
+    print(f"[+] Live cipher enumeration passed: {cdn_ip}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run live TPCRM Findings Scanner validations against real targets.")
     parser.add_argument("--cdn-ip", default="1.1.1.1", help="Known CDN/WAF edge IP (default: 1.1.1.1)")
@@ -199,6 +221,7 @@ def main() -> int:
     begin_scan_session(config, stealth=False, assume_yes=True, allow_placeholder=True)
 
     validate_cdn_target(toolkit, args.cdn_ip)
+    validate_cipher_enumeration(toolkit, args.cdn_ip)
 
     if not args.skip_origin:
         origin_ip = resolve_host(args.origin_host)
