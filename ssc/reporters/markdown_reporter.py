@@ -45,8 +45,12 @@ class MarkdownReporter:
         # TLS Analysis
         if "tls_analysis" in scan_data:
             lines.extend(self._generate_tls_section(scan_data["tls_analysis"]))
-        
-        # HTTP Analysis  
+
+        # TLS Cipher Suites
+        if "cipher_enumeration" in scan_data:
+            lines.extend(self._generate_cipher_section(scan_data["cipher_enumeration"]))
+
+        # HTTP Analysis
         if "http_analysis" in scan_data:
             lines.extend(self._generate_http_section(scan_data["http_analysis"]))
         
@@ -130,7 +134,14 @@ class MarkdownReporter:
                 f"- **Compensating Controls Evidence**: {assessment.get('overall', 'unknown')} "
                 f"({assessment.get('evidence_count', 0)} items)"
             )
-        
+
+        if "cipher_enumeration" in scan_data:
+            cipher_sum = scan_data["cipher_enumeration"].get("summary", {})
+            cats = ", ".join(cipher_sum.get("categories", [])) or "none"
+            lines.append(
+                f"- **TLS Cipher Findings**: {cipher_sum.get('weak_count', 0)} weak ({cats})"
+            )
+
         lines.extend(["", "---", ""])
         return lines
 
@@ -298,6 +309,60 @@ class MarkdownReporter:
         
         return lines
     
+    def _generate_cipher_section(self, cipher_data: Dict[str, Any]) -> List[str]:
+        """Render the TLS cipher-suite enumeration section."""
+        lines = ["## TLS Cipher Suites", ""]
+        scanner = cipher_data.get("scanner_openssl")
+        if scanner:
+            lines.append(f"- **Scanner OpenSSL**: {scanner}")
+            lines.append("")
+
+        ports = cipher_data.get("ports", {}) or {}
+        for port, port_data in ports.items():
+            lines.append(f"### Port {port}")
+            if not port_data.get("ok", False):
+                lines.append(f"- TLS handshake failed: {port_data.get('error', 'unknown error')}")
+                lines.append("")
+                continue
+            for proto, proto_data in (port_data.get("protocols", {}) or {}).items():
+                if not proto_data.get("tested", False):
+                    reason = proto_data.get("reason", "not tested")
+                    lines.append(f"- **{proto}**: not tested ({reason})")
+                    continue
+                accepted = proto_data.get("accepted", [])
+                note = proto_data.get("note")
+                if not accepted:
+                    lines.append(f"- **{proto}**: no accepted ciphers")
+                    if note:
+                        lines.append(f"  - _{note}_")
+                    continue
+                lines.append(f"- **{proto}**:")
+                for entry in accepted:
+                    cats = ", ".join(entry.get("categories", [])) or "ok"
+                    lines.append(f"  - `{entry.get('name', 'unknown')}` ({entry.get('bits', '?')}-bit) — {cats}")
+                if note:
+                    lines.append(f"  - _{note}_")
+            lines.append("")
+
+        weak_findings = cipher_data.get("weak_findings", [])
+        if weak_findings:
+            lines.append("### Weak cipher findings")
+            lines.append("")
+            for finding in weak_findings:
+                port = finding.get("port", "")
+                ciphers = ", ".join(finding.get("ciphers", []))
+                lines.append(
+                    f"- **{finding.get('category')}** ({finding.get('severity')}) on port {port}: "
+                    f"{ciphers}"
+                )
+                rationale = finding.get("rationale")
+                if rationale:
+                    lines.append(f"  - {rationale}")
+            lines.append("")
+
+        lines.extend(["---", ""])
+        return lines
+
     def _generate_http_section(self, http_data: Dict[str, Any]) -> List[str]:
         """Generate HTTP analysis section"""
         lines = [

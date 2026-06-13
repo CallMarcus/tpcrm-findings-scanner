@@ -1307,6 +1307,48 @@ def test_cipher_flag_passthrough():
     print("Cipher flag passthrough: OK")
 
 
+def test_cipher_markdown():
+    scan_data = {
+        "port_scan": {"open_ports": [443]},
+        "cipher_enumeration": {
+            "scanner_openssl": "OpenSSL 3.x",
+            "ports": {
+                "443": {
+                    "ok": True,
+                    "protocols": {
+                        "SSLv2": {"tested": False, "reason": "not offered by modern OpenSSL builds (SSLv2/SSLv3 disabled)"},
+                        "SSLv3": {"tested": False, "reason": "not offered by modern OpenSSL builds (SSLv2/SSLv3 disabled)"},
+                        "TLSv1.2": {"tested": True, "accepted": [
+                            {"name": "ECDHE-RSA-RC4-SHA", "bits": 128, "categories": ["rc4"]},
+                        ]},
+                        "TLSv1.3": {"tested": True, "accepted": [
+                            {"name": "TLS_AES_256_GCM_SHA384", "bits": 256, "categories": []},
+                        ], "note": "TLS 1.3 suites are not individually selectable via stdlib ssl"},
+                    },
+                }
+            },
+            "weak_findings": [{
+                "category": "rc4", "severity": "high", "port": 443,
+                "protocols": ["TLSv1.2"], "ciphers": ["ECDHE-RSA-RC4-SHA"],
+                "rationale": "RC4 stream cipher is cryptographically broken (CVE-2013-2566, CVE-2015-2808).",
+            }],
+            "summary": {"ports_tested": [443], "accepted_total": 2, "weak_count": 1, "categories": ["rc4"]},
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        md = MarkdownReporter(output_dir=tmp)
+        path = md.generate_report(scan_data, "203.0.113.10")
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    assert_true("TLS Cipher Suites" in text, "Markdown missing cipher section header")
+    assert_true("ECDHE-RSA-RC4-SHA" in text, "Markdown missing accepted cipher name")
+    assert_true("Weak cipher findings" in text, "Markdown missing weak findings subsection")
+    assert_true("rc4" in text and "high" in text, "Markdown missing weak finding detail")
+    assert_true("TLS Cipher Findings" in text, "Markdown summary missing cipher line")
+    assert_true("not individually selectable" in text, "Markdown missing TLS 1.3 note")
+    print("Cipher markdown: OK")
+
+
 def test_scan_diff_order_insensitive():
     from ssc.analyzers.scan_diff import _set_delta
 
@@ -1337,6 +1379,7 @@ def main():
     test_classifier()
     test_http_parser_features()
     test_markdown_report()
+    test_cipher_markdown()
     test_json_summary()
     test_cipher_json_summary()
     test_tls_certificate_formatting()
