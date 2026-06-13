@@ -1385,6 +1385,44 @@ def test_cipher_csv_evidence():
     print("Cipher CSV evidence: OK")
 
 
+def test_remediation_narrative_cipher():
+    generator = RemediationNarrativeGenerator()
+
+    weak_scan = {
+        "security_analysis": {"classification": {"classification": "origin", "confidence": "medium"}},
+        "cipher_enumeration": {
+            "weak_findings": [{
+                "category": "rc4", "severity": "high", "port": 443,
+                "protocols": ["TLSv1.2"], "ciphers": ["ECDHE-RSA-RC4-SHA"],
+                "rationale": "RC4 stream cipher is cryptographically broken.",
+            }],
+            "summary": {"ports_tested": [443], "accepted_total": 5, "weak_count": 1, "categories": ["rc4"]},
+        },
+    }
+    weak = generator.generate(weak_scan, "203.0.113.10")
+    assert_true(any("rc4" in bullet.lower() or "weak cipher" in bullet.lower()
+                    for bullet in weak["evidence_bullets"]),
+                f"Cipher evidence bullet missing: {weak['evidence_bullets']}")
+    assert_true(any("cipher" in action.lower() for action in weak["recommended_actions"]),
+                f"Cipher action missing: {weak['recommended_actions']}")
+    assert_true("cipher" in weak["summary"].lower(), f"Cipher statement missing from summary: {weak['summary']}")
+    assert_true(weak["suitable_for_remediation_response"], "Weak-cipher scan should be ticket-ready")
+
+    clean_scan = {
+        "security_analysis": {"classification": {"classification": "origin", "confidence": "medium"}},
+        "cipher_enumeration": {
+            "weak_findings": [],
+            "summary": {"ports_tested": [443], "accepted_total": 7, "weak_count": 0, "categories": []},
+        },
+    }
+    clean = generator.generate(clean_scan, "203.0.113.11")
+    assert_true("refute" in clean["summary"].lower() or "no weak" in clean["summary"].lower(),
+                f"Clean cipher refutation missing: {clean['summary']}")
+    assert_true(clean["suitable_for_remediation_response"],
+                "Clean cipher evidence should still be ticket-ready")
+    print("Remediation narrative (cipher): OK")
+
+
 def test_scan_diff_order_insensitive():
     from ssc.analyzers.scan_diff import _set_delta
 
@@ -1427,6 +1465,7 @@ def main():
     test_origin_discovery_analyzer()
     test_origin_discovery_reports()
     test_remediation_narrative()
+    test_remediation_narrative_cipher()
     test_probe_host_ordering_and_limits()
     test_contact_placeholder_enforcement()
     test_scan_diff()

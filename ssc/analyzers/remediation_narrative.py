@@ -32,11 +32,13 @@ class RemediationNarrativeGenerator:
         classification = (scan_data.get("security_analysis", {}) or {}).get("classification", {}) or {}
         waf_services = self._waf_services(scan_data)
         backport = scan_data.get("backport_analysis", {}) or {}
+        cipher_enum = scan_data.get("cipher_enumeration", {}) or {}
         evidence_assessment = (scan_data.get("evidence", {}) or {}).get("assessment", {}) or {}
         security_score = self._security_score(scan_data)
 
         environment_statement = self._environment_statement(target_ip, classification, waf_services)
         backport_statement = self._backport_statement(backport)
+        cipher_statement = self._cipher_statement(cipher_enum)
         security_controls_statement = self._security_controls_statement(
             waf_services, security_score, evidence_assessment
         )
@@ -50,6 +52,8 @@ class RemediationNarrativeGenerator:
             paragraphs.append(security_controls_statement)
         if backport_statement:
             paragraphs.append(backport_statement)
+        if cipher_statement:
+            paragraphs.append(cipher_statement)
 
         summary = " ".join(paragraph for paragraph in paragraphs if paragraph)
 
@@ -58,10 +62,11 @@ class RemediationNarrativeGenerator:
             "environment_statement": environment_statement,
             "backport_statement": backport_statement,
             "security_controls_statement": security_controls_statement,
+            "cipher_statement": cipher_statement,
             "evidence_bullets": evidence_bullets,
             "recommended_actions": recommended_actions,
             "suitable_for_remediation_response": self._suitable_for_response(
-                classification, backport, evidence_assessment, waf_services
+                classification, backport, evidence_assessment, waf_services, bool(cipher_enum)
             ),
         }
 
@@ -158,6 +163,23 @@ class RemediationNarrativeGenerator:
             "should still be verified against installed package versions."
         )
 
+    def _cipher_statement(self, cipher_enum: Dict[str, Any]) -> str:
+        if not cipher_enum:
+            return ""
+        summary = cipher_enum.get("summary", {}) or {}
+        ports = summary.get("ports_tested", [])
+        port_label = ", ".join(str(p) for p in ports) if ports else "the TLS service"
+        if summary.get("weak_count", 0) == 0:
+            return (
+                f"Independent cipher-suite enumeration on port(s) {port_label} found no weak cipher "
+                f"suites offered, which can refute vendor 'weak cipher' findings against this host."
+            )
+        categories = ", ".join(summary.get("categories", []))
+        return (
+            f"Independent cipher-suite enumeration on port(s) {port_label} confirmed weak cipher "
+            f"suites are offered ({categories}); such findings are valid on this host and warrant remediation."
+        )
+
     def _security_controls_statement(
         self,
         waf_services: List[str],
@@ -246,6 +268,14 @@ class RemediationNarrativeGenerator:
                 provider = self._provider_label(hop.get("provider"))
                 bullets.append(f"DNS chain edge hop: {hop.get('hostname')} ({provider})")
 
+        cipher_enum = scan_data.get("cipher_enumeration", {}) or {}
+        for finding in cipher_enum.get("weak_findings", [])[:4]:
+            ciphers = ", ".join(finding.get("ciphers", [])[:2])
+            bullets.append(
+                f"Weak cipher ({finding.get('severity')}): {finding.get('category')} "
+                f"on port {finding.get('port')} — {ciphers}"
+            )
+
         return bullets
 
     def _recommended_actions(
@@ -309,6 +339,19 @@ class RemediationNarrativeGenerator:
                 "if the finding relates to browser-side protections."
             )
 
+        cipher_summary = (scan_data.get("cipher_enumeration", {}) or {}).get("summary", {}) or {}
+        if cipher_summary.get("weak_count", 0) > 0:
+            actions.append(
+                "Disable the weak cipher suites identified by enumeration on the affected port(s): "
+                + ", ".join(cipher_summary.get("categories", []))
+                + "."
+            )
+        elif scan_data.get("cipher_enumeration"):
+            actions.append(
+                "Use the cipher enumeration evidence (no weak suites offered) to dispute "
+                "version- or scanner-based weak-cipher findings on this host."
+            )
+
         if not actions:
             actions.append(
                 "Review the technical evidence in this report and confirm the finding applies to the "
@@ -323,6 +366,7 @@ class RemediationNarrativeGenerator:
         backport: Dict[str, Any],
         evidence_assessment: Dict[str, Any],
         waf_services: List[str],
+        cipher_present: bool = False,
     ) -> bool:
         if classification.get("classification") == "managed_edge":
             return True
@@ -331,5 +375,7 @@ class RemediationNarrativeGenerator:
         if waf_services:
             return True
         if evidence_assessment.get("overall") in ("strong", "moderate"):
+            return True
+        if cipher_present:
             return True
         return False
