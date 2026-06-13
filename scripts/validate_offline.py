@@ -1349,6 +1349,42 @@ def test_cipher_markdown():
     print("Cipher markdown: OK")
 
 
+def test_cipher_csv_evidence():
+    cipher_enum = {
+        "scanner_openssl": "OpenSSL 3.x",
+        "ports": {"443": {"ok": True}},
+        "weak_findings": [{
+            "category": "3des-sweet32", "severity": "medium", "port": 443,
+            "protocols": ["TLSv1.2"], "ciphers": ["DES-CBC3-SHA"],
+            "rationale": "64-bit block cipher (3DES) is vulnerable to SWEET32 (CVE-2016-2183).",
+        }],
+        "summary": {"ports_tested": [443], "accepted_total": 8, "weak_count": 1, "categories": ["3des-sweet32"]},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        reporter = CSVReporter(output_dir=tmp)
+        path = reporter.generate_cipher_evidence(cipher_enum, "203.0.113.10")
+        assert_true(os.path.exists(path), "Cipher evidence CSV not created")
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        assert_true("DES-CBC3-SHA" in text and "3des-sweet32" in text, f"Cipher CSV content wrong: {text}")
+
+        batch_results = {
+            "targets": ["203.0.113.10"],
+            "results": [{
+                "target_ip": "203.0.113.10",
+                "success": True,
+                "port_scan": {"open_ports": [443]},
+                "security_analysis": {},
+                "cipher_enumeration": cipher_enum,
+            }],
+        }
+        batch_csv = reporter.generate_batch_summary_csv(batch_results, "ciphers")
+        with open(batch_csv, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        assert_true("weak_ciphers" in text and "3des-sweet32" in text, f"Batch cipher column wrong: {text}")
+    print("Cipher CSV evidence: OK")
+
+
 def test_scan_diff_order_insensitive():
     from ssc.analyzers.scan_diff import _set_delta
 
@@ -1385,6 +1421,7 @@ def main():
     test_tls_certificate_formatting()
     test_security_score_promotion()
     test_backport_csv_and_batch_helpers()
+    test_cipher_csv_evidence()
     test_waf_cdn_detector()
     test_dns_chain_resolution()
     test_origin_discovery_analyzer()

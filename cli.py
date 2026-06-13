@@ -330,6 +330,15 @@ class SSCToolkit:
             except Exception as e:
                 scan_log(f"[-] Backport CSV generation error: {e}")
 
+        if "cipher_enumeration" in scan_data:
+            try:
+                reports["cipher_csv"] = self.csv_reporter.generate_cipher_evidence(
+                    scan_data["cipher_enumeration"], target_ip
+                )
+                scan_log(f"[+] Cipher evidence CSV: {reports['cipher_csv']}")
+            except Exception as e:
+                scan_log(f"[-] Cipher CSV generation error: {e}")
+
         if "evidence" in scan_data:
             try:
                 evidence_payload = {
