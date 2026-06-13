@@ -1039,6 +1039,98 @@ def test_tls_self_signed_extraction():
     print("TLS self-signed extraction: OK")
 
 
+def test_cipher_enumeration_local():
+    """Enumerate ciphers against a local TLS server (offline, 127.0.0.1)."""
+    import ssl as _ssl
+    import threading
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cert_path = os.path.join(tmp, "cert.pem")
+        key_path = os.path.join(tmp, "key.pem")
+        with open(cert_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_CERT_PEM)
+        with open(key_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_KEY_PEM)
+
+        server_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        server_ctx.load_cert_chain(cert_path, key_path)
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        server.listen(5)
+
+        def serve():
+            while True:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    break
+                try:
+                    tls_conn = server_ctx.wrap_socket(conn, server_side=True)
+                    tls_conn.close()
+                except OSError:
+                    conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+
+        cfg = ScanConfig()
+        cfg.timeout = 3.0
+        enumerator = CipherEnumerator(cfg)
+        result = enumerator.enumerate_target("127.0.0.1", [port], server_name="offline-test.invalid")
+        server.close()
+
+    # The local server listens on an ephemeral port that is not 443/8443, so no
+    # web TLS ports are "open" -> nothing enumerated. Drive enumerate_port directly too.
+    assert_true(result["ports"] == {}, f"Non-web port should be skipped by enumerate_target: {result}")
+
+    # Direct per-port enumeration against the same server:
+    with tempfile.TemporaryDirectory() as tmp:
+        cert_path = os.path.join(tmp, "cert.pem")
+        key_path = os.path.join(tmp, "key.pem")
+        with open(cert_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_CERT_PEM)
+        with open(key_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_KEY_PEM)
+        server_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        server_ctx.load_cert_chain(cert_path, key_path)
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        server.listen(5)
+
+        def serve2():
+            while True:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    break
+                try:
+                    tls_conn = server_ctx.wrap_socket(conn, server_side=True)
+                    tls_conn.close()
+                except OSError:
+                    conn.close()
+
+        threading.Thread(target=serve2, daemon=True).start()
+        cfg = ScanConfig()
+        cfg.timeout = 3.0
+        port_result = CipherEnumerator(cfg).enumerate_port("127.0.0.1", port, server_name="offline-test.invalid")
+        server.close()
+
+    assert_true(port_result["ok"], f"Local TLS enumeration failed: {port_result.get('error')}")
+    # Legacy protocols reported honestly, never as 'no ciphers offered'.
+    assert_true(port_result["protocols"]["SSLv2"]["tested"] is False, "SSLv2 should be untested")
+    assert_true(port_result["protocols"]["SSLv3"]["tested"] is False, "SSLv3 should be untested")
+    # At least one of TLS 1.2 / TLS 1.3 must yield accepted ciphers on a modern OpenSSL.
+    accepted_12 = port_result["protocols"]["TLSv1.2"].get("accepted", [])
+    accepted_13 = port_result["protocols"]["TLSv1.3"].get("accepted", [])
+    assert_true(len(accepted_12) + len(accepted_13) >= 1,
+                f"Expected accepted ciphers for TLS1.2/1.3: {port_result['protocols']}")
+    for entry in accepted_12 + accepted_13:
+        assert_true("name" in entry and "categories" in entry, f"Accepted entry malformed: {entry}")
+    assert_true("accepted_total" in port_result["summary"], "Port summary missing accepted_total")
+    print("Cipher enumeration (local): OK")
+
+
 def test_batch_summary_stats():
     import json
 
@@ -1207,6 +1299,7 @@ def main():
     test_batch_flag_passthrough()
     test_enrich_scan_data_and_scan_loader()
     test_tls_self_signed_extraction()
+    test_cipher_enumeration_local()
     test_batch_summary_stats()
     test_dns_lookups_leave_default_timeout()
     test_unique_output_paths()
