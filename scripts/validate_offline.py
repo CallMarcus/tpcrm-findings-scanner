@@ -1106,6 +1106,24 @@ def test_unique_output_paths():
     print("Unique output paths: OK")
 
 
+def test_cipher_config():
+    config = Config()
+    assert_true(config.scan.cipher_enum is False, "cipher_enum should default to False")
+    assert_true(config.scan.cipher_max_per_protocol == 64,
+                f"cipher_max_per_protocol default wrong: {config.scan.cipher_max_per_protocol}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "config.yaml")
+        config.scan.cipher_enum = True
+        config.scan.cipher_max_per_protocol = 10
+        config.save(path)
+        reloaded = Config.load(path)
+        assert_true(reloaded.scan.cipher_enum is True, "cipher_enum did not round-trip")
+        assert_true(reloaded.scan.cipher_max_per_protocol == 10,
+                    f"cipher_max_per_protocol did not round-trip: {reloaded.scan.cipher_max_per_protocol}")
+    print("Cipher config: OK")
+
+
 def test_scan_diff_order_insensitive():
     from ssc.analyzers.scan_diff import _set_delta
 
@@ -1150,6 +1168,7 @@ def main():
     test_scan_diff()
     test_domain_target_resolution()
     test_scan_profiles()
+    test_cipher_config()
     test_scan_signature_confirmation()
     test_scan_signature_banner()
     test_scan_log_session()

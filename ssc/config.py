@@ -36,6 +36,9 @@ class ScanConfig:
     capture_body: bool = False
     capture_body_bytes: int = 0
     default_profile: Optional[str] = None
+    # TLS cipher-suite enumeration (--cipher)
+    cipher_enum: bool = False
+    cipher_max_per_protocol: int = 64
 
 @dataclass
 class OutputConfig:
@@ -96,6 +99,8 @@ class Config:
                 'capture_body': self.scan.capture_body,
                 'capture_body_bytes': self.scan.capture_body_bytes,
                 'default_profile': self.scan.default_profile,
+                'cipher_enum': self.scan.cipher_enum,
+                'cipher_max_per_protocol': self.scan.cipher_max_per_protocol,
             },
             'output': {
                 'base_dir': self.output.base_dir,
