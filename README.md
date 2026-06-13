@@ -71,6 +71,10 @@ python cli.py batch targets.txt --threads 5 --profile quick --output-csv -y
 # Batch with the same enrichment flags as single-target scan
 python cli.py batch targets.txt --only-web --evidence --backports --output-csv -y
 
+# Enumerate TLS cipher suites and validate weak-cipher findings
+python cli.py scan example.com --cipher -y
+python cli.py scan 192.168.1.100 --cipher --evidence -y
+
 # Re-run evidence analysis on an existing scan (no network)
 python cli.py evidence example.com --type all
 python cli.py evidence 192.168.1.100 --scan-file outputs/reports/scan_....json --type backports
@@ -301,6 +305,8 @@ scanner/
 **Backport challenges** — Detect Debian/RHEL/Ubuntu backport patterns in server headers and banners; generate evidence when version-string CVEs are likely false positives.
 
 **Compensating controls** — `--evidence` collects security headers, WAF/CDN presence, TLS config, and version indicators into structured CSV/JSON.
+
+**Cipher-suite findings** — `--cipher` enumerates the TLS cipher suites the target accepts (ports 443/8443), classifies weak ones (RC4, 3DES/SWEET32, export, NULL, anonymous, weak key, CBC-on-TLS1.0, no-PFS), and feeds the result into the narrative + evidence to confirm or refute vendor "weak cipher" findings. Native stdlib `ssl`; SSLv2/SSLv3 and ciphers your OpenSSL omits are reported as untested, never as "absent".
 
 **Batch triage** — Scan IP/hostname lists exported from TPCRM findings, produce per-target reports and a CSV summary for prioritization.
 

@@ -117,7 +117,41 @@ class CSVReporter:
                 })
         
         return self.generate_evidence_report(evidence_data, target_ip, "security_controls")
-    
+
+    def generate_cipher_evidence(self, cipher_enumeration: Dict[str, Any],
+                                 target_ip: str) -> str:
+        """Generate CSV evidence for TLS cipher-suite enumeration."""
+        evidence_data = []
+
+        weak_findings = cipher_enumeration.get("weak_findings", [])
+        for finding in weak_findings:
+            port = finding.get("port", "")
+            evidence_data.append({
+                "evidence_type": "weak_cipher",
+                "description": f"{finding.get('category')} ({finding.get('severity')}) on port {port}",
+                "value": "; ".join(finding.get("ciphers", [])),
+                "confidence": "high",
+                "notes": (
+                    f"Protocols: {', '.join(finding.get('protocols', []))}; "
+                    f"{finding.get('rationale', '')}"
+                ),
+            })
+
+        if not weak_findings:
+            summary = cipher_enumeration.get("summary", {})
+            evidence_data.append({
+                "evidence_type": "cipher_inventory",
+                "description": "No weak cipher suites offered",
+                "value": f"{summary.get('accepted_total', 0)} accepted cipher(s)",
+                "confidence": "high",
+                "notes": (
+                    f"Ports tested: {', '.join(str(p) for p in summary.get('ports_tested', []))}; "
+                    f"scanner {cipher_enumeration.get('scanner_openssl', 'unknown')}"
+                ),
+            })
+
+        return self.generate_evidence_report(evidence_data, target_ip, "cipher_suites")
+
     def generate_batch_summary_csv(self, batch_results: Dict[str, Any], 
                                  batch_name: str = "batch") -> str:
         """Generate CSV summary for batch scan results"""
@@ -134,7 +168,7 @@ class CSVReporter:
             fieldnames = [
                 "target_ip", "scan_success", "open_port_count", "web_services",
                 "tls_enabled", "security_score", "waf_cdn_services", "backport_indicators",
-                "scan_timestamp", "notes"
+                "weak_ciphers", "scan_timestamp", "notes"
             ]
             
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -210,6 +244,13 @@ class CSVReporter:
                 for item in backport_analysis.get("backport_evidence", [])
             })
         
+        # Cipher enumeration
+        cipher_summary = (scan_result.get("cipher_enumeration", {}) or {}).get("summary", {}) or {}
+        weak_ciphers = ""
+        if cipher_summary:
+            cats = "; ".join(cipher_summary.get("categories", []))
+            weak_ciphers = str(cipher_summary.get("weak_count", 0)) + (f" ({cats})" if cats else "")
+
         return {
             "target_ip": target_ip,
             "scan_success": "yes" if success else "no",
@@ -219,6 +260,7 @@ class CSVReporter:
             "security_score": f"{security_score:.1f}%",
             "waf_cdn_services": "; ".join(waf_services),
             "backport_indicators": "; ".join(backport_distros),
+            "weak_ciphers": weak_ciphers,
             "scan_timestamp": datetime.utcnow().isoformat() + "Z",
             "notes": scan_result.get("notes", "")
         }

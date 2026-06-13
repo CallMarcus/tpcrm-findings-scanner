@@ -32,6 +32,7 @@ from ssc.utils.scan_log import scan_log_session, scan_log
 from ssc.utils.signatures import format_scan_signature_banner, confirm_scan_session
 from ssc.scanners.http_scanner import HTTPScanner
 from ssc.scanners.tls_scanner import TLSScanner
+from ssc.scanners.cipher_enumerator import CipherEnumerator
 from ssc.config import ScanConfig, SignatureConfig, Config
 from ssc.utils import ScanTarget, is_valid_hostname, parse_target_input
 from ssc.reporters.markdown_reporter import MarkdownReporter
@@ -198,6 +199,28 @@ def test_json_summary():
             ws = data["summary"].get("web_services", [])
             assert_true("HTTPS 443" in ws and "HTTP 80" in ws, f"Web services wrong: {ws}")
     print("JSON summary: OK")
+
+
+def test_cipher_json_summary():
+    import json
+    scan_data = {
+        "port_scan": {"open_ports": [443]},
+        "cipher_enumeration": {
+            "scanner_openssl": "OpenSSL test",
+            "ports": {"443": {}},
+            "weak_findings": [{"category": "rc4", "severity": "high", "port": 443}],
+            "summary": {"ports_tested": [443], "accepted_total": 12, "weak_count": 1, "categories": ["rc4"]},
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        path = JSONReporter(output_dir=tmp).generate_report(scan_data, "203.0.113.10")
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    cipher_summary = data["summary"].get("cipher_summary", {})
+    assert_true(cipher_summary.get("weak_count") == 1, f"cipher_summary weak_count wrong: {cipher_summary}")
+    assert_true(cipher_summary.get("accepted_total") == 12, f"cipher_summary accepted_total wrong: {cipher_summary}")
+    assert_true("rc4" in cipher_summary.get("categories", []), f"cipher_summary categories wrong: {cipher_summary}")
+    print("Cipher JSON summary: OK")
 
 
 def test_tls_certificate_formatting():
@@ -1038,6 +1061,98 @@ def test_tls_self_signed_extraction():
     print("TLS self-signed extraction: OK")
 
 
+def test_cipher_enumeration_local():
+    """Enumerate ciphers against a local TLS server (offline, 127.0.0.1)."""
+    import ssl as _ssl
+    import threading
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cert_path = os.path.join(tmp, "cert.pem")
+        key_path = os.path.join(tmp, "key.pem")
+        with open(cert_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_CERT_PEM)
+        with open(key_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_KEY_PEM)
+
+        server_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        server_ctx.load_cert_chain(cert_path, key_path)
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        server.listen(5)
+
+        def serve():
+            while True:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    break
+                try:
+                    tls_conn = server_ctx.wrap_socket(conn, server_side=True)
+                    tls_conn.close()
+                except OSError:
+                    conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+
+        cfg = ScanConfig()
+        cfg.timeout = 3.0
+        enumerator = CipherEnumerator(cfg)
+        result = enumerator.enumerate_target("127.0.0.1", [port], server_name="offline-test.invalid")
+        server.close()
+
+    # The local server listens on an ephemeral port that is not 443/8443, so no
+    # web TLS ports are "open" -> nothing enumerated. Drive enumerate_port directly too.
+    assert_true(result["ports"] == {}, f"Non-web port should be skipped by enumerate_target: {result}")
+
+    # Direct per-port enumeration against the same server:
+    with tempfile.TemporaryDirectory() as tmp:
+        cert_path = os.path.join(tmp, "cert.pem")
+        key_path = os.path.join(tmp, "key.pem")
+        with open(cert_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_CERT_PEM)
+        with open(key_path, "w", encoding="utf-8") as handle:
+            handle.write(TEST_TLS_KEY_PEM)
+        server_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        server_ctx.load_cert_chain(cert_path, key_path)
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        server.listen(5)
+
+        def serve2():
+            while True:
+                try:
+                    conn, _ = server.accept()
+                except OSError:
+                    break
+                try:
+                    tls_conn = server_ctx.wrap_socket(conn, server_side=True)
+                    tls_conn.close()
+                except OSError:
+                    conn.close()
+
+        threading.Thread(target=serve2, daemon=True).start()
+        cfg = ScanConfig()
+        cfg.timeout = 3.0
+        port_result = CipherEnumerator(cfg).enumerate_port("127.0.0.1", port, server_name="offline-test.invalid")
+        server.close()
+
+    assert_true(port_result["ok"], f"Local TLS enumeration failed: {port_result.get('error')}")
+    # Legacy protocols reported honestly, never as 'no ciphers offered'.
+    assert_true(port_result["protocols"]["SSLv2"]["tested"] is False, "SSLv2 should be untested")
+    assert_true(port_result["protocols"]["SSLv3"]["tested"] is False, "SSLv3 should be untested")
+    # At least one of TLS 1.2 / TLS 1.3 must yield accepted ciphers on a modern OpenSSL.
+    accepted_12 = port_result["protocols"]["TLSv1.2"].get("accepted", [])
+    accepted_13 = port_result["protocols"]["TLSv1.3"].get("accepted", [])
+    assert_true(len(accepted_12) + len(accepted_13) >= 1,
+                f"Expected accepted ciphers for TLS1.2/1.3: {port_result['protocols']}")
+    for entry in accepted_12 + accepted_13:
+        assert_true("name" in entry and "categories" in entry, f"Accepted entry malformed: {entry}")
+    assert_true("accepted_total" in port_result["summary"], "Port summary missing accepted_total")
+    print("Cipher enumeration (local): OK")
+
+
 def test_batch_summary_stats():
     import json
 
@@ -1106,6 +1221,208 @@ def test_unique_output_paths():
     print("Unique output paths: OK")
 
 
+def test_cipher_config():
+    config = Config()
+    assert_true(config.scan.cipher_enum is False, "cipher_enum should default to False")
+    assert_true(config.scan.cipher_max_per_protocol == 64,
+                f"cipher_max_per_protocol default wrong: {config.scan.cipher_max_per_protocol}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "config.yaml")
+        config.scan.cipher_enum = True
+        config.scan.cipher_max_per_protocol = 10
+        config.save(path)
+        reloaded = Config.load(path)
+        assert_true(reloaded.scan.cipher_enum is True, "cipher_enum did not round-trip")
+        assert_true(reloaded.scan.cipher_max_per_protocol == 10,
+                    f"cipher_max_per_protocol did not round-trip: {reloaded.scan.cipher_max_per_protocol}")
+    print("Cipher config: OK")
+
+
+def test_cipher_classifier():
+    classify = CipherEnumerator.classify_cipher
+
+    assert_true(classify("ECDHE-RSA-AES128-GCM-SHA256", 128, "TLSv1.2") == [],
+                "Strong PFS cipher should have no weak categories")
+    assert_true(classify("TLS_AES_256_GCM_SHA384", 256, "TLSv1.3") == [],
+                "TLS 1.3 suite should have no weak categories")
+
+    rc4 = classify("ECDHE-RSA-RC4-SHA", 128, "TLSv1.2")
+    assert_true("rc4" in rc4 and "no-forward-secrecy" not in rc4, f"RC4 classification wrong: {rc4}")
+
+    triple = classify("DES-CBC3-SHA", 112, "TLSv1")
+    for expected in ("3des-sweet32", "weak-key", "cbc-tls10", "no-forward-secrecy"):
+        assert_true(expected in triple, f"3DES/TLS1.0 missing {expected}: {triple}")
+
+    static_rsa = classify("AES128-SHA", 128, "TLSv1.2")
+    assert_true(static_rsa == ["no-forward-secrecy"], f"Static RSA classification wrong: {static_rsa}")
+
+    exp = classify("EXP-RC4-MD5", 40, "TLSv1")
+    for expected in ("rc4", "export", "weak-key", "no-forward-secrecy"):
+        assert_true(expected in exp, f"Export cipher missing {expected}: {exp}")
+
+    anon = classify("ADH-AES128-SHA", 128, "TLSv1.2")
+    assert_true("anonymous" in anon, f"Anonymous cipher not flagged: {anon}")
+
+    null = classify("ECDHE-RSA-NULL-SHA", 0, "TLSv1.2")
+    assert_true("null-cipher" in null, f"NULL cipher not flagged: {null}")
+    print("Cipher classifier: OK")
+
+
+def test_cipher_flag_passthrough():
+    parser = create_parser()
+    scan_args = parser.parse_args(["scan", "203.0.113.10", "--cipher", "-y"])
+    batch_args = parser.parse_args(["batch", "targets.txt", "--cipher"])
+    assert_true(scan_args.cipher is True, "scan --cipher not parsed")
+    assert_true(batch_args.cipher is True, "batch --cipher not parsed")
+
+    options = TargetScanOptions(cipher=True)
+    assert_true(options.cipher is True, "TargetScanOptions.cipher missing")
+
+    toolkit = SSCToolkit(Config.load())
+    assert_true(hasattr(toolkit, "cipher_enumerator"), "Toolkit missing cipher_enumerator")
+
+    captured = {}
+    original = toolkit.cipher_enumerator.enumerate_target
+
+    def stub_enumerate(ip, open_ports, server_name=None):
+        captured["called"] = (ip, tuple(open_ports), server_name)
+        return {"scanner_openssl": "test", "ports": {"443": {}},
+                "weak_findings": [], "summary": {"weak_count": 0, "categories": [], "accepted_total": 3}}
+
+    toolkit.cipher_enumerator.enumerate_target = stub_enumerate
+    try:
+        scan_data = toolkit.scan_target(
+            "203.0.113.10",
+            ports=[443],
+            skip_port_scan=True,
+            only_web=True,
+            cipher=True,
+        )
+    finally:
+        toolkit.cipher_enumerator.enumerate_target = original
+
+    assert_true("cipher_enumeration" in scan_data, "cipher_enumeration not attached to scan_data")
+    assert_true(captured.get("called") is not None, "enumerate_target was not called")
+    print("Cipher flag passthrough: OK")
+
+
+def test_cipher_markdown():
+    scan_data = {
+        "port_scan": {"open_ports": [443]},
+        "cipher_enumeration": {
+            "scanner_openssl": "OpenSSL 3.x",
+            "ports": {
+                "443": {
+                    "ok": True,
+                    "protocols": {
+                        "SSLv2": {"tested": False, "reason": "not offered by modern OpenSSL builds (SSLv2/SSLv3 disabled)"},
+                        "SSLv3": {"tested": False, "reason": "not offered by modern OpenSSL builds (SSLv2/SSLv3 disabled)"},
+                        "TLSv1.2": {"tested": True, "accepted": [
+                            {"name": "ECDHE-RSA-RC4-SHA", "bits": 128, "categories": ["rc4"]},
+                        ]},
+                        "TLSv1.3": {"tested": True, "accepted": [
+                            {"name": "TLS_AES_256_GCM_SHA384", "bits": 256, "categories": []},
+                        ], "note": "TLS 1.3 suites are not individually selectable via stdlib ssl"},
+                    },
+                }
+            },
+            "weak_findings": [{
+                "category": "rc4", "severity": "high", "port": 443,
+                "protocols": ["TLSv1.2"], "ciphers": ["ECDHE-RSA-RC4-SHA"],
+                "rationale": "RC4 stream cipher is cryptographically broken (CVE-2013-2566, CVE-2015-2808).",
+            }],
+            "summary": {"ports_tested": [443], "accepted_total": 2, "weak_count": 1, "categories": ["rc4"]},
+        },
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        md = MarkdownReporter(output_dir=tmp)
+        path = md.generate_report(scan_data, "203.0.113.10")
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    assert_true("TLS Cipher Suites" in text, "Markdown missing cipher section header")
+    assert_true("ECDHE-RSA-RC4-SHA" in text, "Markdown missing accepted cipher name")
+    assert_true("Weak cipher findings" in text, "Markdown missing weak findings subsection")
+    assert_true("rc4" in text and "high" in text, "Markdown missing weak finding detail")
+    assert_true("TLS Cipher Findings" in text, "Markdown summary missing cipher line")
+    assert_true("not individually selectable" in text, "Markdown missing TLS 1.3 note")
+    print("Cipher markdown: OK")
+
+
+def test_cipher_csv_evidence():
+    cipher_enum = {
+        "scanner_openssl": "OpenSSL 3.x",
+        "ports": {"443": {"ok": True}},
+        "weak_findings": [{
+            "category": "3des-sweet32", "severity": "medium", "port": 443,
+            "protocols": ["TLSv1.2"], "ciphers": ["DES-CBC3-SHA"],
+            "rationale": "64-bit block cipher (3DES) is vulnerable to SWEET32 (CVE-2016-2183).",
+        }],
+        "summary": {"ports_tested": [443], "accepted_total": 8, "weak_count": 1, "categories": ["3des-sweet32"]},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        reporter = CSVReporter(output_dir=tmp)
+        path = reporter.generate_cipher_evidence(cipher_enum, "203.0.113.10")
+        assert_true(os.path.exists(path), "Cipher evidence CSV not created")
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        assert_true("DES-CBC3-SHA" in text and "3des-sweet32" in text, f"Cipher CSV content wrong: {text}")
+
+        batch_results = {
+            "targets": ["203.0.113.10"],
+            "results": [{
+                "target_ip": "203.0.113.10",
+                "success": True,
+                "port_scan": {"open_ports": [443]},
+                "security_analysis": {},
+                "cipher_enumeration": cipher_enum,
+            }],
+        }
+        batch_csv = reporter.generate_batch_summary_csv(batch_results, "ciphers")
+        with open(batch_csv, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        assert_true("weak_ciphers" in text and "3des-sweet32" in text, f"Batch cipher column wrong: {text}")
+    print("Cipher CSV evidence: OK")
+
+
+def test_remediation_narrative_cipher():
+    generator = RemediationNarrativeGenerator()
+
+    weak_scan = {
+        "security_analysis": {"classification": {"classification": "origin", "confidence": "medium"}},
+        "cipher_enumeration": {
+            "weak_findings": [{
+                "category": "rc4", "severity": "high", "port": 443,
+                "protocols": ["TLSv1.2"], "ciphers": ["ECDHE-RSA-RC4-SHA"],
+                "rationale": "RC4 stream cipher is cryptographically broken.",
+            }],
+            "summary": {"ports_tested": [443], "accepted_total": 5, "weak_count": 1, "categories": ["rc4"]},
+        },
+    }
+    weak = generator.generate(weak_scan, "203.0.113.10")
+    assert_true(any("rc4" in bullet.lower() or "weak cipher" in bullet.lower()
+                    for bullet in weak["evidence_bullets"]),
+                f"Cipher evidence bullet missing: {weak['evidence_bullets']}")
+    assert_true(any("cipher" in action.lower() for action in weak["recommended_actions"]),
+                f"Cipher action missing: {weak['recommended_actions']}")
+    assert_true("cipher" in weak["summary"].lower(), f"Cipher statement missing from summary: {weak['summary']}")
+    assert_true(weak["suitable_for_remediation_response"], "Weak-cipher scan should be ticket-ready")
+
+    clean_scan = {
+        "security_analysis": {"classification": {"classification": "origin", "confidence": "medium"}},
+        "cipher_enumeration": {
+            "weak_findings": [],
+            "summary": {"ports_tested": [443], "accepted_total": 7, "weak_count": 0, "categories": []},
+        },
+    }
+    clean = generator.generate(clean_scan, "203.0.113.11")
+    assert_true("refute" in clean["summary"].lower() or "no weak" in clean["summary"].lower(),
+                f"Clean cipher refutation missing: {clean['summary']}")
+    assert_true(clean["suitable_for_remediation_response"],
+                "Clean cipher evidence should still be ticket-ready")
+    print("Remediation narrative (cipher): OK")
+
+
 def test_scan_diff_order_insensitive():
     from ssc.analyzers.scan_diff import _set_delta
 
@@ -1136,26 +1453,34 @@ def main():
     test_classifier()
     test_http_parser_features()
     test_markdown_report()
+    test_cipher_markdown()
     test_json_summary()
+    test_cipher_json_summary()
     test_tls_certificate_formatting()
     test_security_score_promotion()
     test_backport_csv_and_batch_helpers()
+    test_cipher_csv_evidence()
     test_waf_cdn_detector()
     test_dns_chain_resolution()
     test_origin_discovery_analyzer()
     test_origin_discovery_reports()
     test_remediation_narrative()
+    test_remediation_narrative_cipher()
     test_probe_host_ordering_and_limits()
     test_contact_placeholder_enforcement()
     test_scan_diff()
     test_domain_target_resolution()
     test_scan_profiles()
+    test_cipher_config()
+    test_cipher_classifier()
     test_scan_signature_confirmation()
     test_scan_signature_banner()
     test_scan_log_session()
     test_batch_flag_passthrough()
+    test_cipher_flag_passthrough()
     test_enrich_scan_data_and_scan_loader()
     test_tls_self_signed_extraction()
+    test_cipher_enumeration_local()
     test_batch_summary_stats()
     test_dns_lookups_leave_default_timeout()
     test_unique_output_paths()

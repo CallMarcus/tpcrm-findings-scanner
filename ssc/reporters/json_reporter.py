@@ -113,6 +113,15 @@ class JSONReporter:
                     "redirect_host_count": discovery_summary.get("redirect_host_count", 0),
                 }
 
+            cipher_enum = scan_data.get("cipher_enumeration", {}) or {}
+            if cipher_enum:
+                cipher_sum = cipher_enum.get("summary", {}) or {}
+                summary["cipher_summary"] = {
+                    "accepted_total": cipher_sum.get("accepted_total", 0),
+                    "weak_count": cipher_sum.get("weak_count", 0),
+                    "categories": cipher_sum.get("categories", []),
+                }
+
             report["summary"] = summary
         except Exception as exc:
             # Deliberately broad: summary derivation walks arbitrary scan data
