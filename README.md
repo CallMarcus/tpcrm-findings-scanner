@@ -270,7 +270,7 @@ CLI flags override config at runtime (`--timeout`, `--capture-body`, etc.).
 ```
 scanner/
 ├── cli.py                         # Orchestrator + CLI
-├── config.yaml
+├── config.yaml                    # local-only (gitignored); copy from config.example.yaml
 ├── scripts/
 │   ├── validate_offline.py        # Offline test suite (no network)
 │   └── validate_live.py           # Live CDN/origin checks (auto-confirms signature)
@@ -340,10 +340,6 @@ Offline suite covers classifier, HTTP parsing, reporters, probe limits, evidence
 - Default mode sends identifying headers (`User-Agent`, `X-Security-Scan`, `X-Contact`) for SIEM correlation. The CLI blocks placeholder contacts, shows the active signature, and asks for confirmation before scanning. Use `config --contact`, `--stealth`, `--allow-placeholder`, or `-y` when appropriate.
 - Optional body capture is off by default; enable only when needed (`--capture-body`).
 - Reports may contain headers, cert SANs, and banners from live targets — treat outputs accordingly.
-
-## Legacy migration
-
-Replaces: `ssc_probe.py`, `debian-scanner.py`, `ssc_server_token_batch.py`, `rdp_port_scanner.py`.
 
 ## License
 
