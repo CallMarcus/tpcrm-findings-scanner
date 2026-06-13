@@ -32,6 +32,7 @@ from ssc.utils.scan_log import scan_log_session, scan_log
 from ssc.utils.signatures import format_scan_signature_banner, confirm_scan_session
 from ssc.scanners.http_scanner import HTTPScanner
 from ssc.scanners.tls_scanner import TLSScanner
+from ssc.scanners.cipher_enumerator import CipherEnumerator
 from ssc.config import ScanConfig, SignatureConfig, Config
 from ssc.utils import ScanTarget, is_valid_hostname, parse_target_input
 from ssc.reporters.markdown_reporter import MarkdownReporter
@@ -1124,6 +1125,36 @@ def test_cipher_config():
     print("Cipher config: OK")
 
 
+def test_cipher_classifier():
+    classify = CipherEnumerator.classify_cipher
+
+    assert_true(classify("ECDHE-RSA-AES128-GCM-SHA256", 128, "TLSv1.2") == [],
+                "Strong PFS cipher should have no weak categories")
+    assert_true(classify("TLS_AES_256_GCM_SHA384", 256, "TLSv1.3") == [],
+                "TLS 1.3 suite should have no weak categories")
+
+    rc4 = classify("ECDHE-RSA-RC4-SHA", 128, "TLSv1.2")
+    assert_true("rc4" in rc4 and "no-forward-secrecy" not in rc4, f"RC4 classification wrong: {rc4}")
+
+    triple = classify("DES-CBC3-SHA", 112, "TLSv1")
+    for expected in ("3des-sweet32", "weak-key", "cbc-tls10", "no-forward-secrecy"):
+        assert_true(expected in triple, f"3DES/TLS1.0 missing {expected}: {triple}")
+
+    static_rsa = classify("AES128-SHA", 128, "TLSv1.2")
+    assert_true(static_rsa == ["no-forward-secrecy"], f"Static RSA classification wrong: {static_rsa}")
+
+    exp = classify("EXP-RC4-MD5", 40, "TLSv1")
+    for expected in ("rc4", "export", "weak-key", "no-forward-secrecy"):
+        assert_true(expected in exp, f"Export cipher missing {expected}: {exp}")
+
+    anon = classify("ADH-AES128-SHA", 128, "TLSv1.2")
+    assert_true("anonymous" in anon, f"Anonymous cipher not flagged: {anon}")
+
+    null = classify("ECDHE-RSA-NULL-SHA", 0, "TLSv1.2")
+    assert_true("null-cipher" in null, f"NULL cipher not flagged: {null}")
+    print("Cipher classifier: OK")
+
+
 def test_scan_diff_order_insensitive():
     from ssc.analyzers.scan_diff import _set_delta
 
@@ -1169,6 +1200,7 @@ def main():
     test_domain_target_resolution()
     test_scan_profiles()
     test_cipher_config()
+    test_cipher_classifier()
     test_scan_signature_confirmation()
     test_scan_signature_banner()
     test_scan_log_session()
