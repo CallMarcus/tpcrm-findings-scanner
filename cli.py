@@ -836,6 +836,8 @@ def handle_scan_command(args, toolkit: SSCToolkit):
         allow_placeholder=getattr(args, "allow_placeholder", False),
     )
 
+    cipher_enabled = args.cipher or toolkit.config.scan.cipher_enum
+
     try:
         run_target_pipeline(
             toolkit,
@@ -848,11 +850,11 @@ def handle_scan_command(args, toolkit: SSCToolkit):
                 skip_port_scan=getattr(args, "no_port_scan", False),
                 evidence=args.evidence,
                 backports=args.backports,
-                cipher=args.cipher,
+                cipher=cipher_enabled,
                 profile=getattr(args, "profile", None),
                 input_target=scan_target.input,
                 write_reports=True,
-                write_evidence_reports=args.evidence or args.backports or args.cipher,
+                write_evidence_reports=args.evidence or args.backports or cipher_enabled,
             ),
         )
     except ValueError as exc:
@@ -979,6 +981,8 @@ def handle_batch_command(args, toolkit: SSCToolkit):
         allow_placeholder=getattr(args, "allow_placeholder", False),
     )
 
+    cipher_enabled = getattr(args, "cipher", False) or toolkit.config.scan.cipher_enum
+
     results: List[Dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=max(1, args.threads)) as executor:
         futures = {
@@ -991,7 +995,7 @@ def handle_batch_command(args, toolkit: SSCToolkit):
                 skip_port_scan=getattr(args, "no_port_scan", False),
                 evidence=getattr(args, "evidence", False),
                 backports=getattr(args, "backports", False),
-                cipher=getattr(args, "cipher", False),
+                cipher=cipher_enabled,
                 profile=getattr(args, "profile", None),
             ): scan_target
             for scan_target in targets
@@ -1030,7 +1034,7 @@ def handle_batch_command(args, toolkit: SSCToolkit):
             "skip_port_scan": getattr(args, "no_port_scan", False),
             "evidence": getattr(args, "evidence", False),
             "backports": getattr(args, "backports", False),
-            "cipher": getattr(args, "cipher", False),
+            "cipher": cipher_enabled,
             "profile": getattr(args, "profile", None),
             "timestamp": datetime.datetime.now(timezone.utc).isoformat(),
         },
