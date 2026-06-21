@@ -233,6 +233,13 @@ Markdown reports include a **Remediation Narrative** section — plain-language 
 - TLS cipher-suite findings (confirm or refute weak-cipher findings) when `--cipher` is used
 - Numbered recommended actions and supporting evidence bullets
 
+For a step-by-step workflow on turning these reports into platform responses —
+how to look up a finding, decide between refute / compensating control / resolve,
+gather the matching evidence with this tool, and submit it — see the
+[SecurityScorecard Finding Response Playbook](guides/ssc-response-playbook.md).
+It also collects generic tips on platform defaults (e.g. why Windows Server TLS
+findings are usually real, why Linux version strings mislead).
+
 ## Configuration
 
 `config.yaml` controls scan behavior and output. Key options:
